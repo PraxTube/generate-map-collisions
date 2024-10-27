@@ -6,6 +6,8 @@ use bevy::window::{PresentMode, Window, WindowMode};
 use bevy_ecs_ldtk::prelude::*;
 use bevy_rapier2d::prelude::*;
 
+const TILE_SIZE: f32 = 16.0;
+
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins
@@ -20,10 +22,17 @@ fn main() {
             })
             .set(ImagePlugin::default_nearest())
             .build(),))
-        .add_plugins(LdtkPlugin)
-        .add_systems(Startup, setup)
+        .add_plugins((
+            LdtkPlugin,
+            RapierPhysicsPlugin::<NoUserData>::default(),
+            RapierDebugRenderPlugin {
+                enabled: true,
+                ..default()
+            },
+        ))
         .insert_resource(LevelSelection::index(0))
-        .register_ldtk_entity::<MyBundle>("MyEntityIdentifier")
+        .add_systems(Startup, setup)
+        .add_systems(Update, (print_grid_coords, place_colliders))
         .run();
 }
 
@@ -39,16 +48,25 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     });
 }
 
-#[derive(Default, Component)]
-struct ComponentA;
+fn print_grid_coords(q_grid_coords: Query<&GridCoords, Added<IntGridCell>>) {
+    for grid_coords in &q_grid_coords {
+        info!("{:?}", grid_coords);
+    }
+}
 
-#[derive(Default, Component)]
-struct ComponentB;
-
-#[derive(Default, Bundle, LdtkEntity)]
-pub struct MyBundle {
-    a: ComponentA,
-    b: ComponentB,
-    #[sprite_sheet_bundle]
-    sprite_bundle: LdtkSpriteSheetBundle,
+fn place_colliders(mut commands: Commands, q_grid_coords: Query<&GridCoords, Added<IntGridCell>>) {
+    let collider = Collider::convex_hull(&[
+        Vec2::X * TILE_SIZE,
+        Vec2::Y * TILE_SIZE,
+        Vec2::NEG_Y * TILE_SIZE,
+        Vec2::NEG_X * TILE_SIZE,
+    ])
+    .unwrap();
+    for grid_coords in &q_grid_coords {
+        let v = Vec2::new(grid_coords.x as f32, grid_coords.y as f32) * TILE_SIZE;
+        commands.spawn((
+            collider.clone(),
+            SpatialBundle::from_transform(Transform::from_translation(v.extend(0.0))),
+        ));
+    }
 }
