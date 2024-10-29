@@ -1,7 +1,5 @@
 use bevy::prelude::*;
 
-use crate::decomposition::ATOL;
-
 fn wrap(a: i32, b: i32) -> usize {
     if a < 0 {
         (a % b + b) as usize
@@ -32,8 +30,4 @@ pub fn right(a: Vec2, b: Vec2, c: Vec2) -> bool {
 
 pub fn right_on(a: Vec2, b: Vec2, c: Vec2) -> bool {
     area(a, b, c) <= 0.0
-}
-
-pub fn collinear(a: Vec2, b: Vec2, c: Vec2) -> bool {
-    area(a, b, c).abs() <= ATOL
 }

@@ -45,13 +45,15 @@ fn intersection(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2) -> Vec2 {
     Vec2::default()
 }
 
-pub fn decompose_poly(poly: &mut Vec<Vec2>, decomposition: &mut Vec<Vec2>) {
-    let mut upper_int = Vec2::default();
-    let mut lower_int = Vec2::default();
+pub fn decompose_poly(poly: &mut Vec<Vec2>) -> Vec<Vec<Vec2>> {
+    assert!(poly.len() > 2, "Length of given poly is < 3, {:?}", poly);
+
+    make_ccw(poly);
+
+    let mut upper_inter = Vec2::default();
+    let mut lower_inter = Vec2::default();
     let mut p;
 
-    let mut upper_dist;
-    let mut lower_dist;
     let mut d;
     let mut closest_dist;
 
@@ -59,27 +61,32 @@ pub fn decompose_poly(poly: &mut Vec<Vec2>, decomposition: &mut Vec<Vec2>) {
     let mut lower_index = 0;
     let mut closest_index = 0;
 
-    let mut lower_poly = Vec::new();
-    let mut upper_poly = Vec::new();
-
     for i in 0..poly.len() as i32 {
         if !is_reflex(poly, i) {
             continue;
         }
 
-        upper_dist = f32::MAX;
-        lower_dist = f32::MAX;
+        let mut lower_poly = Vec::new();
+        let mut upper_poly = Vec::new();
+
+        let mut upper_dist = f32::MAX;
+        let mut lower_dist = f32::MAX;
+
         for j in 0..poly.len() as i32 {
+            // Line intersects with an edge
             if left(at(poly, i - 1), at(poly, i), at(poly, j))
                 && right_on(at(poly, i - 1), at(poly, i), at(poly, j - 1))
             {
-                let p = intersection(at(poly, i - 1), at(poly, i), at(poly, j), at(poly, j - 1));
+                // Find point of intersection
+                p = intersection(at(poly, i - 1), at(poly, i), at(poly, j), at(poly, j - 1));
 
+                // Make sure intersection point is inside the poly
                 if right(at(poly, i + 1), at(poly, i), p) {
-                    let d = at(poly, i).distance_squared(p);
+                    d = at(poly, i).distance_squared(p);
                     if d < lower_dist {
+                        // Only keep closest intersection
                         lower_dist = d;
-                        lower_int = p;
+                        lower_inter = p;
                         lower_index = j;
                     }
                 }
@@ -87,27 +94,29 @@ pub fn decompose_poly(poly: &mut Vec<Vec2>, decomposition: &mut Vec<Vec2>) {
             if left(at(poly, i + 1), at(poly, i), at(poly, j + 1))
                 && right_on(at(poly, i + 1), at(poly, i), at(poly, j))
             {
-                let p = intersection(at(poly, i + 1), at(poly, i), at(poly, j), at(poly, j + 1));
+                p = intersection(at(poly, i + 1), at(poly, i), at(poly, j), at(poly, j + 1));
 
                 if left(at(poly, i - 1), at(poly, i), p) {
-                    let d = at(poly, i).distance_squared(p);
+                    d = at(poly, i).distance_squared(p);
                     if d < upper_dist {
                         upper_dist = d;
-                        upper_int = p;
+                        upper_inter = p;
                         upper_index = j;
                     }
                 }
             }
         }
 
-        if lower_index == (upper_index + 1) % poly.len() as i32 {
-            p = (lower_int + upper_int) / 2.0;
+        // No vertices to connect to, choose a point in the middle
+        if lower_index == ((upper_index + 1) % poly.len() as i32) {
+            p = (lower_inter + upper_inter) / 2.0;
 
             if i < upper_index {
                 lower_poly.extend_from_slice(&poly[i as usize..=upper_index as usize]);
                 lower_poly.push(p);
                 upper_poly.push(p);
                 if lower_index != 0 {
+                    assert!(lower_index > 0);
                     upper_poly.extend_from_slice(&poly[lower_index as usize..poly.len()]);
                 }
                 upper_poly.extend_from_slice(&poly[0..=i as usize]);
@@ -118,7 +127,8 @@ pub fn decompose_poly(poly: &mut Vec<Vec2>, decomposition: &mut Vec<Vec2>) {
                 lower_poly.extend_from_slice(&poly[0..=upper_index as usize]);
                 lower_poly.push(p);
                 upper_poly.push(p);
-                upper_poly.extend_from_slice(&poly[0..=i as usize]);
+                assert!(lower_index > 0);
+                upper_poly.extend_from_slice(&poly[lower_index as usize..=i as usize]);
             }
         } else {
             if lower_index > upper_index {
@@ -133,12 +143,14 @@ pub fn decompose_poly(poly: &mut Vec<Vec2>, decomposition: &mut Vec<Vec2>) {
                     d = at(poly, i).distance_squared(at(poly, j));
                     if d < closest_dist {
                         closest_dist = d;
+                        // TODO: Potentially bad maybe?
                         closest_index = j % poly.len() as i32;
                     }
                 }
             }
 
             if i < closest_index {
+                assert!(closest_index > 0);
                 lower_poly.extend_from_slice(&poly[i as usize..=closest_index as usize]);
                 if closest_index != 0 {
                     upper_poly.extend_from_slice(&poly[closest_index as usize..poly.len()]);
@@ -153,14 +165,19 @@ pub fn decompose_poly(poly: &mut Vec<Vec2>, decomposition: &mut Vec<Vec2>) {
             }
         }
 
-        if lower_poly.len() < upper_poly.len() {
-            decompose_poly(&mut lower_poly, decomposition);
-            decompose_poly(&mut upper_poly, decomposition);
+        let (mut smaller, mut bigger) = if lower_poly.len() < upper_poly.len() {
+            (
+                decompose_poly(&mut lower_poly),
+                decompose_poly(&mut upper_poly),
+            )
         } else {
-            decompose_poly(&mut upper_poly, decomposition);
-            decompose_poly(&mut lower_poly, decomposition);
-        }
+            (
+                decompose_poly(&mut upper_poly),
+                decompose_poly(&mut lower_poly),
+            )
+        };
+        smaller.append(&mut bigger);
+        return smaller;
     }
-
-    decomposition.append(&mut poly.clone());
+    vec![poly.clone()]
 }

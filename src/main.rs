@@ -157,7 +157,7 @@ fn index_to_vertices(index: u8) -> Vec<Vec<IVec2>> {
     }
 }
 
-fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Graph>) {
+fn index_matrix(grid: &Res<Grid>) -> Vec<Vec<u8>> {
     let mut matrix = vec![vec![0; grid.size.y as usize]; grid.size.y as usize];
     for pos in &grid.positions {
         matrix[pos.x as usize][pos.y as usize] = 1;
@@ -173,9 +173,14 @@ fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Gr
                 | matrix[i][j + 1] << 3;
         }
     }
+    index_matrix
+}
 
+fn disjoint_vertices(grid: &Res<Grid>) -> Vec<Vec<IVec2>> {
+    let index_matrix = index_matrix(grid);
     let mut vertices: Vec<Vec<IVec2>> = Vec::new();
 
+    // Convert indices to vertices
     for i in 0..index_matrix.len() {
         for j in 0..index_matrix.len() {
             for vertex_pair in index_to_vertices(index_matrix[i][j]) {
@@ -187,9 +192,27 @@ fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Gr
             }
         }
     }
+    vertices
+}
 
+fn connected_vertices(grid: &Res<Grid>) -> Vec<IVec2> {
+    let mut vertices = disjoint_vertices(grid);
+    // Merge disjoint graphs together until there is only one left
+    // We do can do this by simply checking if the last and the first element of any two graphs
+    // match. We know that this must be true for for all graphs with one other graph because the
+    // whole collider must be closed and non-selfcrossing without loops.
+    //
+    // 0 --- 1 --- 2
+    //              \
+    //               \
+    //                0           1 --- 0 --- 1
+    //                 \         /
+    //                  \       /
+    //                   1 --- 0
+    //
+    // This for example, the first three vertices are already connected into one graph, then 2 and
+    // 0 share one graph (edge in this case because I didn't draw it propely).
     while vertices.len() > 1 {
-        // info!("verts: {:?}", vertices);
         let mut group_index = 0;
         for (i, vertex_group) in vertices.iter().enumerate() {
             if i == 0 {
@@ -209,51 +232,47 @@ fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Gr
     }
     let n = vertices[0].len() - 1;
     // First and last vertex should be equal, we now have a connected line, to bring it to a loop
-    // we just remove the last vertex which and it now "loops" to the first one.
+    // we just remove the last vertex and it now "loops" to the first one.
     assert!(vertices[0][0] == vertices[0][n]);
     vertices[0].remove(n);
-    let vertices = vertices[0].clone();
+    vertices[0].clone()
+}
 
-    info!("DOOOONE");
+fn vertices_and_indices(grid: &Res<Grid>) -> (Vec<Vec2>, Vec<[u32; 2]>) {
+    let minimal_vertices = minimal_vertices(&connected_vertices(&grid));
 
-    let mut collider_vertices = Vec::new();
-
-    for uvert in &vertices {
-        let v = Vec2::new(uvert.x as f32, uvert.y as f32) / 2.0 * TILE_SIZE;
-        // info!("{}", v);
-        collider_vertices.push(v);
-    }
-
-    info!("spawning colliders now...");
-
-    let minimal_vertices = minimal_vertices(&vertices);
-
-    let mut collider_vertices = Vec::new();
+    let mut vertices = Vec::new();
     for uvert in &minimal_vertices {
         let v = Vec2::new(uvert.x as f32, uvert.y as f32) / 2.0 * TILE_SIZE;
-        // info!("{}", v);
-        collider_vertices.push(v);
+        vertices.push(v);
     }
 
-    let mut decomposition = Vec::new();
-    decompose_poly(&mut collider_vertices.clone(), &mut decomposition);
-
-    let collider_vertices = decomposition;
-
-    let mut collider_indices = Vec::new();
-    for i in 0..collider_vertices.len() - 1 {
-        collider_indices.push([i as u32, i as u32 + 1]);
+    let mut indices = Vec::new();
+    for i in 0..vertices.len() - 1 {
+        indices.push([i as u32, i as u32 + 1]);
     }
-    collider_indices.push([collider_vertices.len() as u32 - 1, 0]);
+    indices.push([vertices.len() as u32 - 1, 0]);
+    (vertices, indices)
+}
 
-    graph.v = collider_vertices.clone();
-    graph.e = collider_indices.clone();
+fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Graph>) {
+    let (vertices, indices) = vertices_and_indices(&grid);
 
-    // commands.spawn((
-    //     Collider::convex_decomposition(&collider_vertices, &collider_indices),
-    //     ColliderDebugColor(VIOLET.into()),
-    //     SpatialBundle::default(),
-    // ));
+    graph.v = vertices.clone();
+    graph.e = indices.clone();
+
+    let polygons = decompose_poly(&mut vertices.clone());
+    for poly in &polygons {
+        commands.spawn((
+            Collider::compound(vec![(
+                Vec2::default(),
+                0.0,
+                Collider::convex_hull(poly).unwrap(),
+            )]),
+            ColliderDebugColor(VIOLET.into()),
+            SpatialBundle::default(),
+        ));
+    }
 }
 
 fn draw_gizmos(mut gizmos: Gizmos, graph: Res<Graph>) {
