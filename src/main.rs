@@ -157,8 +157,8 @@ fn index_to_vertices(index: u8) -> Vec<Vec<IVec2>> {
     }
 }
 
-fn index_matrix(grid: &Res<Grid>) -> Vec<Vec<u8>> {
-    let mut matrix = vec![vec![0; grid.size.y as usize]; grid.size.y as usize];
+fn index_matrix(grid: &Grid) -> Vec<Vec<u8>> {
+    let mut matrix = vec![vec![0; grid.size.y as usize]; grid.size.x as usize];
     for pos in &grid.positions {
         matrix[pos.x as usize][pos.y as usize] = 1;
     }
@@ -176,7 +176,7 @@ fn index_matrix(grid: &Res<Grid>) -> Vec<Vec<u8>> {
     index_matrix
 }
 
-fn disjoint_vertices(grid: &Res<Grid>) -> Vec<Vec<IVec2>> {
+fn disjoint_vertices(grid: &Grid) -> Vec<Vec<IVec2>> {
     let index_matrix = index_matrix(grid);
     let mut vertices: Vec<Vec<IVec2>> = Vec::new();
 
@@ -195,7 +195,7 @@ fn disjoint_vertices(grid: &Res<Grid>) -> Vec<Vec<IVec2>> {
     vertices
 }
 
-fn connected_vertices(grid: &Res<Grid>) -> Vec<IVec2> {
+fn connected_vertices(grid: &Grid) -> Vec<IVec2> {
     let mut vertices = disjoint_vertices(grid);
     // Merge disjoint graphs together until there is only one left
     // We do can do this by simply checking if the last and the first element of any two graphs
@@ -238,8 +238,8 @@ fn connected_vertices(grid: &Res<Grid>) -> Vec<IVec2> {
     vertices[0].clone()
 }
 
-fn vertices_and_indices(grid: &Res<Grid>) -> (Vec<Vec2>, Vec<[u32; 2]>) {
-    let minimal_vertices = minimal_vertices(&connected_vertices(&grid));
+fn vertices_and_indices(grid: &Grid) -> (Vec<Vec2>, Vec<[u32; 2]>) {
+    let minimal_vertices = minimal_vertices(&connected_vertices(grid));
 
     let mut vertices = Vec::new();
     for uvert in &minimal_vertices {
@@ -255,23 +255,74 @@ fn vertices_and_indices(grid: &Res<Grid>) -> (Vec<Vec2>, Vec<[u32; 2]>) {
     (vertices, indices)
 }
 
-fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Graph>) {
-    let (vertices, indices) = vertices_and_indices(&grid);
+fn disjoint_graphs(grid: &Res<Grid>) -> Vec<Vec<IVec2>> {
+    let mut disjoint_graphs = Vec::new();
+    let mut positions = grid.positions.clone();
 
-    graph.v = vertices.clone();
-    graph.e = indices.clone();
+    let mut graph = vec![vec![0; grid.size.y as usize]; grid.size.x as usize];
+    for pos in &grid.positions {
+        graph[pos.x as usize][pos.y as usize] = 1;
+    }
 
-    let polygons = decompose_poly(&mut vertices.clone());
-    for poly in &polygons {
-        commands.spawn((
-            Collider::compound(vec![(
-                Vec2::default(),
-                0.0,
-                Collider::convex_hull(poly).unwrap(),
-            )]),
-            ColliderDebugColor(VIOLET.into()),
-            SpatialBundle::default(),
-        ));
+    while !positions.is_empty() {
+        let mut current_positions = Vec::new();
+        let mut stack = vec![positions[0]];
+        while let Some(n) = stack.pop() {
+            // Out of bounds
+            if n.x < 0 || n.y < 0 || n.x >= grid.size.x || n.y >= grid.size.y {
+                continue;
+            }
+            let (Ok(x), Ok(y)): (Result<usize, _>, Result<usize, _>) =
+                (n.x.try_into(), n.y.try_into())
+            else {
+                continue;
+            };
+
+            // We have hit a dead end (or a node we already visited)
+            if graph[x][y] == 0 {
+                continue;
+            }
+            graph[x][y] = 0;
+
+            current_positions.push(n);
+            // Delete the node from the positions, it should always be valid
+            positions.swap_remove(
+                positions
+                    .iter()
+                    .position(|x| *x == n)
+                    .expect("node should be inside positions, something is fucky"),
+            );
+
+            stack.push(n + IVec2::X);
+            stack.push(n + IVec2::Y);
+            stack.push(n + IVec2::NEG_X);
+            stack.push(n + IVec2::NEG_Y);
+        }
+        disjoint_graphs.push(current_positions);
+    }
+    disjoint_graphs
+}
+
+fn spawn_colliders(mut commands: Commands, grid: Res<Grid>) {
+    for graph in disjoint_graphs(&grid) {
+        let grid = Grid {
+            size: grid.size,
+            positions: graph,
+        };
+        let (vertices, _) = vertices_and_indices(&grid);
+
+        let polygons = decompose_poly(&mut vertices.clone());
+        for poly in &polygons {
+            commands.spawn((
+                Collider::compound(vec![(
+                    Vec2::default(),
+                    0.0,
+                    Collider::convex_hull(poly).unwrap(),
+                )]),
+                ColliderDebugColor(VIOLET.into()),
+                SpatialBundle::default(),
+            ));
+        }
     }
 }
 
