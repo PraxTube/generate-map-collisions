@@ -1,5 +1,8 @@
 #![allow(clippy::too_many_arguments, clippy::type_complexity)]
 
+mod decomposition;
+mod point;
+
 use std::time::Duration;
 
 use bevy::color::palettes::css::{BLACK, VIOLET};
@@ -9,6 +12,7 @@ use bevy::time::common_conditions::once_after_delay;
 use bevy::window::{PresentMode, Window, WindowMode};
 use bevy_ecs_ldtk::prelude::*;
 use bevy_rapier2d::prelude::*;
+use decomposition::decompose_poly;
 
 const TILE_SIZE: f32 = 16.0;
 
@@ -33,22 +37,13 @@ impl Default for Grid {
     }
 }
 
-fn collinear(a: UVec2, b: UVec2, c: UVec2) -> bool {
-    fn uvec2_to_ivec2(x: UVec2) -> IVec2 {
-        IVec2::new(x.x as i32, x.y as i32)
-    }
-
-    let a = uvec2_to_ivec2(a);
-    let b = uvec2_to_ivec2(b);
-    let c = uvec2_to_ivec2(c);
-
+fn collinear(a: IVec2, b: IVec2, c: IVec2) -> bool {
     let dir_ab = b - a;
     let dir_bc = c - b;
-
     dir_ab == dir_bc
 }
 
-fn minimal_vertices(v: &Vec<UVec2>) -> Vec<UVec2> {
+fn minimal_vertices(v: &Vec<IVec2>) -> Vec<IVec2> {
     let mut redundant_vert_indices = Vec::new();
 
     let n = v.len();
@@ -131,29 +126,29 @@ fn add_cells(mut grid: ResMut<Grid>, q_grid_coords: Query<&GridCoords, Added<Int
     }
 }
 
-fn index_to_vertices(index: u8) -> Vec<Vec<UVec2>> {
+fn index_to_vertices(index: u8) -> Vec<Vec<IVec2>> {
     match index {
         0 => Vec::new(),
-        1 => vec![vec![UVec2::X, UVec2::Y]],
-        2 => vec![vec![UVec2::new(2, 1), UVec2::X]],
-        3 => vec![vec![UVec2::new(2, 1), UVec2::Y]],
-        4 => vec![vec![UVec2::new(1, 2), UVec2::new(2, 1)]],
+        1 => vec![vec![IVec2::X, IVec2::Y]],
+        2 => vec![vec![IVec2::new(2, 1), IVec2::X]],
+        3 => vec![vec![IVec2::new(2, 1), IVec2::Y]],
+        4 => vec![vec![IVec2::new(1, 2), IVec2::new(2, 1)]],
         5 => vec![
-            vec![UVec2::new(1, 2), UVec2::Y],
-            vec![UVec2::X, UVec2::new(2, 1)],
+            vec![IVec2::new(1, 2), IVec2::Y],
+            vec![IVec2::X, IVec2::new(2, 1)],
         ],
-        6 => vec![vec![UVec2::new(1, 2), UVec2::X]],
-        7 => vec![vec![UVec2::new(1, 2), UVec2::Y]],
-        8 => vec![vec![UVec2::Y, UVec2::new(1, 2)]],
-        9 => vec![vec![UVec2::X, UVec2::new(1, 2)]],
+        6 => vec![vec![IVec2::new(1, 2), IVec2::X]],
+        7 => vec![vec![IVec2::new(1, 2), IVec2::Y]],
+        8 => vec![vec![IVec2::Y, IVec2::new(1, 2)]],
+        9 => vec![vec![IVec2::X, IVec2::new(1, 2)]],
         10 => vec![
-            vec![UVec2::new(2, 1), UVec2::new(1, 2)],
-            vec![UVec2::Y, UVec2::X],
+            vec![IVec2::new(2, 1), IVec2::new(1, 2)],
+            vec![IVec2::Y, IVec2::X],
         ],
-        11 => vec![vec![UVec2::new(2, 1), UVec2::new(1, 2)]],
-        12 => vec![vec![UVec2::Y, UVec2::new(2, 1)]],
-        13 => vec![vec![UVec2::X, UVec2::new(2, 1)]],
-        14 => vec![vec![UVec2::Y, UVec2::X]],
+        11 => vec![vec![IVec2::new(2, 1), IVec2::new(1, 2)]],
+        12 => vec![vec![IVec2::Y, IVec2::new(2, 1)]],
+        13 => vec![vec![IVec2::X, IVec2::new(2, 1)]],
+        14 => vec![vec![IVec2::Y, IVec2::X]],
         15 => Vec::new(),
         _ => {
             error!("should never happen! Got bitmasks that are >15");
@@ -179,14 +174,14 @@ fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Gr
         }
     }
 
-    let mut vertices: Vec<Vec<UVec2>> = Vec::new();
+    let mut vertices: Vec<Vec<IVec2>> = Vec::new();
 
     for i in 0..index_matrix.len() {
         for j in 0..index_matrix.len() {
             for vertex_pair in index_to_vertices(index_matrix[i][j]) {
                 let v_pair = vertex_pair
                     .iter()
-                    .map(|v| *v + 2 * UVec2::new(i as u32, j as u32))
+                    .map(|v| *v + 2 * IVec2::new(i as i32, j as i32))
                     .collect();
                 vertices.push(v_pair);
             }
@@ -240,6 +235,11 @@ fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Gr
         collider_vertices.push(v);
     }
 
+    let mut decomposition = Vec::new();
+    decompose_poly(&mut collider_vertices.clone(), &mut decomposition);
+
+    let collider_vertices = decomposition;
+
     let mut collider_indices = Vec::new();
     for i in 0..collider_vertices.len() - 1 {
         collider_indices.push([i as u32, i as u32 + 1]);
@@ -249,11 +249,11 @@ fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Gr
     graph.v = collider_vertices.clone();
     graph.e = collider_indices.clone();
 
-    commands.spawn((
-        Collider::convex_decomposition(&collider_vertices, &collider_indices),
-        ColliderDebugColor(VIOLET.into()),
-        SpatialBundle::default(),
-    ));
+    // commands.spawn((
+    //     Collider::convex_decomposition(&collider_vertices, &collider_indices),
+    //     ColliderDebugColor(VIOLET.into()),
+    //     SpatialBundle::default(),
+    // ));
 }
 
 fn draw_gizmos(mut gizmos: Gizmos, graph: Res<Graph>) {
