@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use bevy::color::palettes::css::{PINK, RED};
+use bevy::color::palettes::css::{BLACK, VIOLET};
 use bevy::prelude::*;
 use bevy::render::camera::ScalingMode;
 use bevy::time::common_conditions::once_after_delay;
@@ -33,13 +33,50 @@ impl Default for Grid {
     }
 }
 
+fn collinear(a: UVec2, b: UVec2, c: UVec2) -> bool {
+    fn uvec2_to_ivec2(x: UVec2) -> IVec2 {
+        IVec2::new(x.x as i32, x.y as i32)
+    }
+
+    let a = uvec2_to_ivec2(a);
+    let b = uvec2_to_ivec2(b);
+    let c = uvec2_to_ivec2(c);
+
+    let dir_ab = b - a;
+    let dir_bc = c - b;
+
+    dir_ab == dir_bc
+}
+
+fn minimal_vertices(v: &Vec<UVec2>) -> Vec<UVec2> {
+    let mut redundant_vert_indices = Vec::new();
+
+    let n = v.len();
+    if collinear(v[n - 1], v[0], v[1]) {
+        redundant_vert_indices.push(0);
+    }
+
+    for i in 1..n {
+        if collinear(v[i - 1], v[i], v[(i + 1) % n]) {
+            redundant_vert_indices.push(i);
+        }
+    }
+    redundant_vert_indices.reverse();
+
+    let mut minimal_vertices = v.clone();
+    for index in redundant_vert_indices {
+        minimal_vertices.remove(index);
+    }
+    minimal_vertices
+}
+
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     present_mode: PresentMode::Fifo,
-                    mode: WindowMode::Windowed,
+                    mode: WindowMode::Fullscreen,
                     fit_canvas_to_parent: true,
                     ..default()
                 }),
@@ -70,11 +107,11 @@ fn main() {
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-
     mut config_store: ResMut<GizmoConfigStore>,
 ) {
     let (config, _) = config_store.config_mut::<DefaultGizmoConfigGroup>();
     config.enabled = true;
+    config.line_width = 5.0;
 
     let mut cam = Camera2dBundle::default();
     cam.projection.scaling_mode = ScalingMode::FixedVertical(300.0);
@@ -139,9 +176,6 @@ fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Gr
                 | matrix[i + 1][j] << 1
                 | matrix[i + 1][j + 1] << 2
                 | matrix[i][j + 1] << 3;
-            if index_matrix[i][j] != 0 {
-                // info!("{}", index_matrix[i][j]);
-            }
         }
     }
 
@@ -183,13 +217,13 @@ fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Gr
     // we just remove the last vertex which and it now "loops" to the first one.
     assert!(vertices[0][0] == vertices[0][n]);
     vertices[0].remove(n);
+    let vertices = vertices[0].clone();
 
     info!("DOOOONE");
-    // info!("{:?}", vertices);
 
     let mut collider_vertices = Vec::new();
 
-    for uvert in &vertices[0] {
+    for uvert in &vertices {
         let v = Vec2::new(uvert.x as f32, uvert.y as f32) / 2.0 * TILE_SIZE;
         // info!("{}", v);
         collider_vertices.push(v);
@@ -197,33 +231,29 @@ fn spawn_colliders(mut commands: Commands, grid: Res<Grid>, mut graph: ResMut<Gr
 
     info!("spawning colliders now...");
 
-    commands.spawn((
-        // Collider::polyline(collider_vertices, None),
-        Collider::convex_hull(&collider_vertices).unwrap(),
-        ColliderDebugColor(RED.into()),
-        SpatialBundle::default(),
-    ));
+    let minimal_vertices = minimal_vertices(&vertices);
 
-    info!("Spawned Naiive");
+    let mut collider_vertices = Vec::new();
+    for uvert in &minimal_vertices {
+        let v = Vec2::new(uvert.x as f32, uvert.y as f32) / 2.0 * TILE_SIZE;
+        // info!("{}", v);
+        collider_vertices.push(v);
+    }
 
     let mut collider_indices = Vec::new();
-
     for i in 0..collider_vertices.len() - 1 {
         collider_indices.push([i as u32, i as u32 + 1]);
     }
     collider_indices.push([collider_vertices.len() as u32 - 1, 0]);
 
-    commands.spawn((
-        Collider::convex_decomposition(&collider_vertices, &collider_indices),
-        SpatialBundle::default(),
-    ));
-
     graph.v = collider_vertices.clone();
     graph.e = collider_indices.clone();
 
-    // info!("{:?}", collider_vertices);
-    // info!("{:?}", collider_indices);
-    info!("Spawned complex");
+    commands.spawn((
+        Collider::convex_decomposition(&collider_vertices, &collider_indices),
+        ColliderDebugColor(VIOLET.into()),
+        SpatialBundle::default(),
+    ));
 }
 
 fn draw_gizmos(mut gizmos: Gizmos, graph: Res<Graph>) {
@@ -232,6 +262,7 @@ fn draw_gizmos(mut gizmos: Gizmos, graph: Res<Graph>) {
     }
 
     for [i, j] in &graph.e {
-        gizmos.line_2d(graph.v[*i as usize], graph.v[*j as usize], PINK);
+        gizmos.circle_2d(graph.v[*i as usize], 5.0, BLACK);
+        gizmos.line_2d(graph.v[*i as usize], graph.v[*j as usize], BLACK);
     }
 }
